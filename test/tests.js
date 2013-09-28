@@ -814,6 +814,21 @@ $(document).ready(function() {
 			delete window.Primate;
 			delete window.Carnivore;
 		});
+
+		test( "findOrCreate does not modify attributes hash if parse is used, prior to creating new model", function () {
+			var model = Backbone.RelationalModel.extend({
+				parse: function( response ) {
+					response.id = response.id + 'something';
+					return response;
+				}
+			});
+			var attributes = {id: 42, foo: "bar"};
+			var testAttributes = {id: 42, foo: "bar"};
+
+			model.findOrCreate( attributes, { parse: true, merge: false, create: false } );
+
+			ok( _.isEqual( attributes, testAttributes ), "attributes hash should not be modified" );
+		});
 		
 
 	module( "Backbone.RelationalModel", { setup: initObjects } );
@@ -1273,7 +1288,15 @@ $(document).ready(function() {
 
 			equal( person.get( 'name' ), 'dude' );
 			equal( person1.get( 'name' ), 'dude' );
+		});
 
+		test( "constructor.find", function() {
+			var personColl = Backbone.Relational.store.getCollection( person1 ),
+			origPersonCollSize = personColl.length;
+
+			// Look for a non-existent person
+			person = Person.find( { id: 5001 } );
+			ok( !person );
 		});
 
 		test( "change events in relation can use changedAttributes properly", function() {
@@ -1325,30 +1348,48 @@ $(document).ready(function() {
 		});
 
 		test( 'change events should not fire on new items in Collection#set', function() {
-			var changeEvents = 0;
-			var Foo = Backbone.RelationalModel.extend({
+			var modelChangeEvents = 0,
+				collectionChangeEvents = 0;
+
+			var Animal2 = Animal.extend({
 				initialize: function(options) {
-					this.on( 'change', function(name) { changeEvents++; } );
-					this.on( 'change:id', function(name) { changeEvents++; } );
-					this.on( 'change:name', function(name) { changeEvents++; } );
-					this.on( 'all', function(name) {
-						if ( name.indexOf('change') === 0 ) {
-							changeEvents++;
+					this.on( 'all', function( name, event ) {
+						//console.log( 'Animal2: %o', arguments );
+						if ( name.indexOf( 'change' ) === 0 ) {
+							modelChangeEvents++;
 						}
 					});
 				}
 			});
-			var Foos = Backbone.Collection.extend({
-				model: Foo
+
+			var AnimalCollection2 = AnimalCollection.extend({
+				model: Animal2,
+
+				initialize: function(options) {
+					this.on( 'all', function( name, event ) {
+						//console.log( 'AnimalCollection2: %o', arguments );
+						if ( name.indexOf('change') === 0 ) {
+							collectionChangeEvents++;
+						}
+					});
+				}
 			});
 
-			var foos = new Foos();
-			foos.set( [{
-				id: 'foo-1',
-				name: 'foo'
+			var zoo = new Zoo( { id: 'zoo-1' } );
+
+			var coll = new AnimalCollection2();
+			coll.set( [{
+				id: 'animal-1',
+				livesIn: 'zoo-1'
 			}] );
 
-			equal( changeEvents, 0, 'no change events should be triggered' );
+			equal( collectionChangeEvents, 0, 'no change event should be triggered on the collection' );
+
+			modelChangeEvents = collectionChangeEvents = 0;
+
+			coll.at( 0 ).set( 'name', 'Willie' );
+
+			equal( modelChangeEvents, 2, 'change event should be triggered' );
 		});
 
 	
@@ -1364,7 +1405,12 @@ $(document).ready(function() {
 					'carnivore': 'Carnivore'
 				}
 			});
-			scope.Primate = scope.Mammal.extend();
+			scope.Primate = scope.Mammal.extend({
+				subModelTypes: {
+					'human': 'Human'
+				}
+			});
+			scope.Human = scope.Primate.extend();
 			scope.Carnivore = scope.Mammal.extend();
 
 			var MammalCollection = AnimalCollection.extend({
@@ -1373,11 +1419,13 @@ $(document).ready(function() {
 
 			var mammals = new MammalCollection( [
 				{ id: 5, species: 'chimp', type: 'primate' },
-				{ id: 6, species: 'panther', type: 'carnivore' }
+				{ id: 6, species: 'panther', type: 'carnivore' },
+				{ id: 7, species: 'person', type: 'human' }
 			]);
 
 			ok( mammals.at( 0 ) instanceof scope.Primate );
 			ok( mammals.at( 1 ) instanceof scope.Carnivore );
+			ok( mammals.at( 2 ) instanceof scope.Human );
 		});
 
 		test( "Object building based on type, when used in relations" , function() {
@@ -1390,8 +1438,13 @@ $(document).ready(function() {
 					'dog': 'Dog'
 				}
 			});
-			var Dog = scope.Dog = PetAnimal.extend();
+			var Dog = scope.Dog = PetAnimal.extend({
+				subModelTypes: {
+					'poodle': 'Poodle'
+				}
+			});
 			var Cat = scope.Cat = PetAnimal.extend();
+			var Poodle = scope.Poodle = Dog.extend();
 
 			var PetPerson = scope.PetPerson = Backbone.RelationalModel.extend({
 				relations: [{
@@ -1413,21 +1466,30 @@ $(document).ready(function() {
 					{
 						type: 'cat',
 						name: 'Whiskers'
+					},
+					{
+						type: 'poodle',
+						name: 'Mitsy'
 					}
 				]
 			});
 
 			ok( petPerson.get( 'pets' ).at( 0 ) instanceof Dog );
 			ok( petPerson.get( 'pets' ).at( 1 ) instanceof Cat );
+			ok( petPerson.get( 'pets' ).at( 2 ) instanceof Poodle );
 
-			petPerson.get( 'pets' ).add({
+			petPerson.get( 'pets' ).add([{
 				type: 'dog',
 				name: 'Spot II'
-			});
+			},{
+				type: 'poodle',
+				name: 'Mitsy II'
+			}]);
 			
-			ok( petPerson.get( 'pets' ).at( 2 ) instanceof Dog );
+			ok( petPerson.get( 'pets' ).at( 3 ) instanceof Dog );
+			ok( petPerson.get( 'pets' ).at( 4 ) instanceof Poodle );
 		});
-		
+
 		test( "Automatic sharing of 'superModel' relations" , function() {
 			var scope = {};
 			Backbone.Relational.store.addModelScope( scope );
@@ -1452,6 +1514,10 @@ $(document).ready(function() {
 			scope.Flea = Backbone.RelationalModel.extend({});
 
 			scope.Dog = scope.PetAnimal.extend({
+				subModelTypes: {
+					'poodle': 'Poodle'
+				},
+
 				relations: [{
 					type: Backbone.HasMany,
 					key:	'fleas',
@@ -1461,22 +1527,154 @@ $(document).ready(function() {
 					}
 				}]
 			});
+			scope.Poodle = scope.Dog.extend();
+			
+			var dog = new scope.Dog({
+				name: 'Spot'
+			});
+
+			var poodle = new scope.Poodle({
+				name: 'Mitsy'
+			});
+			
+			var person = new scope.PetPerson({
+				pets: [ dog, poodle ]
+			});
+
+			ok( dog.get( 'owner' ) === person, "Dog has a working owner relation." );
+			ok( poodle.get( 'owner' ) === person, "Poodle has a working owner relation." );
+
+			var flea = new scope.Flea({
+				host: dog
+			});
+
+			var flea2 = new scope.Flea({
+				host: poodle
+			});
+			
+			ok( dog.get( 'fleas' ).at( 0 ) === flea, "Dog has a working fleas relation." );
+			ok( poodle.get( 'fleas' ).at( 0 ) === flea2, "Poodle has a working fleas relation." );
+		});
+
+		test( "Initialization and sharing of 'superModel' reverse relations from a 'leaf' child model" , function() {
+			var scope = {};
+			Backbone.Relational.store.addModelScope( scope );
+			scope.PetAnimal = Backbone.RelationalModel.extend({
+				subModelTypes: {
+					'dog': 'Dog'
+				}
+			});
+	
+			scope.Flea = Backbone.RelationalModel.extend({});
+			scope.Dog = scope.PetAnimal.extend({
+				subModelTypes: {
+					'poodle': 'Poodle'
+				},
+				relations: [{
+					type: Backbone.HasMany,
+					key:	'fleas',
+					relatedModel: scope.Flea,
+					reverseRelation: {
+						key: 'host'
+					}
+				}]
+			});
+			scope.Poodle = scope.Dog.extend();
+	
+			// Define the PetPerson after defining all of the Animal models. Include the 'owner' as a reverse-relation. 
+			scope.PetPerson = Backbone.RelationalModel.extend({
+				relations: [{
+					type: Backbone.HasMany,
+					key:  'pets',
+					relatedModel: scope.PetAnimal,
+					reverseRelation: {
+						type: Backbone.HasOne,
+						key: 'owner'
+					}
+				}]
+			});
+	
+			// Initialize the models starting from the deepest descendant and working your way up to the root parent class. 
+			var poodle = new scope.Poodle({
+				name: 'Mitsy'
+			});
 			
 			var dog = new scope.Dog({
 				name: 'Spot'
 			});
 			
 			var person = new scope.PetPerson({
-				pets: [ dog ]
+				pets: [ dog, poodle ]
 			});
-
+	
 			ok( dog.get( 'owner' ) === person, "Dog has a working owner relation." );
-
+			ok( poodle.get( 'owner' ) === person, "Poodle has a working owner relation." );
+	
 			var flea = new scope.Flea({
 				host: dog
 			});
+	
+			var flea2 = new scope.Flea({
+				host: poodle
+			});
 			
 			ok( dog.get( 'fleas' ).at( 0 ) === flea, "Dog has a working fleas relation." );
+			ok( poodle.get( 'fleas' ).at( 0 ) === flea2, "Poodle has a working fleas relation." );
+		});
+
+		test( "Initialization and sharing of 'superModel' reverse relations by adding to a polymorphic HasMany" , function() {
+			var scope = {};
+			Backbone.Relational.store.addModelScope( scope );
+			scope.PetAnimal = Backbone.RelationalModel.extend({
+				// The order in which these are defined matters for this regression test. 
+				subModelTypes: {
+					'dog': 'Dog',
+					'fish': 'Fish'
+				}
+			});
+			
+			// This looks unnecessary but it's for this regression test there has to be multiple subModelTypes.
+			scope.Fish = scope.PetAnimal.extend({});
+	
+			scope.Flea = Backbone.RelationalModel.extend({});
+			scope.Dog = scope.PetAnimal.extend({
+				subModelTypes: {
+					'poodle': 'Poodle'
+				},
+				relations: [{
+					type: Backbone.HasMany,
+					key:	'fleas',
+					relatedModel: scope.Flea,
+					reverseRelation: {
+						key: 'host'
+					}
+				}]
+			});
+			scope.Poodle = scope.Dog.extend({});
+	
+			// Define the PetPerson after defining all of the Animal models. Include the 'owner' as a reverse-relation. 
+			scope.PetPerson = Backbone.RelationalModel.extend({
+				relations: [{
+					type: Backbone.HasMany,
+					key:  'pets',
+					relatedModel: scope.PetAnimal,
+					reverseRelation: {
+						type: Backbone.HasOne,
+						key: 'owner'
+					}
+				}]
+			});
+	
+			// We need to initialize a model through the root-parent-model's build method by adding raw-attributes for a 
+			// leaf-child-class to a polymorphic HasMany.
+			var person = new scope.PetPerson({
+				pets: [{
+					type: 'poodle',
+					name: 'Mitsy'
+				}]
+			});
+			var poodle = person.get('pets').first();
+			ok( poodle.get( 'owner' ) === person, "Poodle has a working owner relation." );
 		});
 
 		test( "Overriding of supermodel relations", function() {
@@ -1679,6 +1877,10 @@ $(document).ready(function() {
 		});
 
 		test("'dotNotation' is true", function(){
+			var Role = Backbone.RelationalModel.extend({});
+			var Roles = Backbone.Collection.extend({
+				model: Role
+			});
 			var NewUser = Backbone.RelationalModel.extend({});
 			var NewPerson = Backbone.RelationalModel.extend({
 				dotNotation: true,
@@ -1686,21 +1888,36 @@ $(document).ready(function() {
 					type: Backbone.HasOne,
 					key: 'user',
 					relatedModel: NewUser
+				},
+				{
+					type: Backbone.HasMany,
+					key: 'roles',
+					relatedModel: Role,
+					collectionType: Roles
 				}]
 			});
 			
 			var person = new NewPerson({
 				"normal": true,
 				"user.over": 2,
-				user: {name: "John", "over" : 1}
+				user: {name: "John", "over" : 1},
+				roles: [
+					{name: 'publisher'},
+					{name: 'moderator'}
+				]
 			});
 			
 			ok( person.get( 'normal' ) === true, "getting normal attributes works as usual" );
 			ok( person.get( 'user.name' ) === "John", "attributes of nested models can be get via dot notation: nested.attribute");
 			ok(oldCompany.get( 'ceo.name' ) === undefined, "no dotNotation when not enabled");
+			ok( person.get( 'user.fake.attribute') === undefined, "undefined when path doesn't exist");
 			raises( function() {
 				person.get( 'user.over' );
 			}, "getting ambiguous nested attributes raises an exception");
+			ok( person.get('roles.0') instanceof Role, "get by index works for nested collections");
+			ok( person.get('roles.0.name') === "publisher", "attributes of models of nested collections can be get via dot notation: nested.0.attribute");
+			ok( person.get('roles.100') === undefined, "undefined when index is out of bounds");
+			ok( person.get('roles.100.name') === undefined, "attributes of out-of-bounds models of nested collections are undefined");
 		});
 
 		test( "Relations load from both `keySource` and `key`", function() {
@@ -1749,6 +1966,52 @@ $(document).ready(function() {
 
 			view.set( 'property_ids', [ 1, 2 ] );
 			ok( view.get( 'properties' ) && view.get( 'properties' ).length === 2, "'view' has two 'properties'" );
+		});
+
+		test( "`keySource` is emptied after a set, doesn't get confused by `unset`", function() {
+			var SubModel = Backbone.RelationalModel.extend();
+
+			var Model = Backbone.RelationalModel.extend({
+				relations: [{
+					type: Backbone.HasOne,
+					key: 'submodel',
+					keySource: 'sub_data',
+					relatedModel: SubModel
+				}]
+			});
+
+			var inst = new Model( {'id': 123} );
+
+			// `set` may be called from fetch
+			inst.set({
+				'id': 123,
+				'some_field': 'some_value',
+				'sub_data': {
+					'id': 321,
+					'key': 'value'
+				},
+				'to_unset': 'unset value'
+			});
+
+			ok( inst.get('submodel').get('key') === 'value', "value of submodule.key should be 'value'" );
+			inst.set( { 'to_unset': '' }, { 'unset': true } );
+			ok( inst.get('submodel').get('key') === 'value', "after unset value of submodule.key should be still 'value'" );
+
+			ok( typeof inst.get('sub_data') === 'undefined', "keySource field should be removed from model" );
+			ok( typeof inst.get('submodel') !== 'undefined', "key field should be added..." );
+			ok( inst.get('submodel') instanceof SubModel, "... and should be model instance" );
+
+			// set called from fetch
+			inst.set({
+				'sub_data': {
+					'id': 321,
+					'key': 'value2'
+				}
+			});
+
+			ok( typeof inst.get('sub_data') === 'undefined',  "keySource field should be removed from model" );
+			ok( typeof inst.get('submodel') !== 'undefined',  "key field should be present..." );
+			ok( inst.get('submodel').get('key') == 'value2', "... and should be updated" );
 		});
 
 		test( "'keyDestination' saves to 'key'", function() {
@@ -2450,6 +2713,47 @@ $(document).ready(function() {
 			ok( b2.get( 'a' ).id == 'a2' );
 		});
 
+		test( "Can retrieve relations if it's a property or a method", function () {
+			window.Zoo.prototype._relations = window.Zoo.prototype.relations;
+			window.Zoo.prototype.relations = function () {
+				return [
+					{
+						type: Backbone.HasMany,
+						key: 'animals',
+						relatedModel: function() {
+							return Animal; // or `require` it from somewhere
+						},
+						includeInJSON: [ 'id', 'species' ],
+						collectionType: function() {
+							return AnimalCollection; // or `require` it from somewhere
+						},
+						collectionOptions: function( instance ) { return { 'url': 'zoo/' + instance.cid + '/animal/' } },
+						reverseRelation: {
+							key: 'livesIn',
+							includeInJSON: [ 'id', 'name' ]
+						}
+					}
+				];
+			};
+
+			var animalData = [
+				{ id: 1, species: 'Lion' },
+				{ id: 2 ,species: 'Zebra' }
+			];
+
+			var zoo = new Zoo( { animals: animalData } ),
+				animals = zoo.get( 'animals' );
+
+			ok( animals instanceof AnimalCollection );
+			equal( animals.length, 2, "Two animals in 'zoo'" );
+			ok( animals.at( 0 ) instanceof Animal );
+
+			zoo.destroy();
+
+			window.Zoo.prototype.relations = window.Zoo.prototype._relations;
+			delete window.Zoo.prototype._relations;
+		});
+
 
 	module( "Backbone.HasOne", { setup: initObjects } );
 
@@ -2901,6 +3205,27 @@ $(document).ready(function() {
 			equal( indexes[0], 0, "First item has index 0" );
 			equal( indexes[1], 1, "Second item has index 1" );
 		});
+
+
+        test( "Sort event should be fired after the add event that caused it, even when using 'set'", function() {
+            var zoo = new Zoo();
+            var animals = zoo.get('animals');
+            var events = [];
+
+            animals.comparator = 'id';
+
+            animals.on('add', function() { events.push('add'); });
+            animals.on('sort', function() { events.push('sort'); });
+
+            zoo.set('animals' , [
+                {id : 'lion-2'},
+                {id : 'lion-1'}
+            ]);
+
+            equal(animals.at(0).id, 'lion-1');
+            deepEqual(events, ['add', 'sort', 'add', 'sort']);
+        });
+
 
 		test( "The 'collectionKey' options is used to create references on generated Collections back to its RelationalModel", function() {
 			var zoo = new Zoo({
@@ -3705,6 +4030,19 @@ $(document).ready(function() {
 			ok( !a.get( 'species' ), "`a` hasn't gotten merged" );
 		});
 
+		test( "pop", function() {
+			var zoo = new Zoo({
+				    animals: [ { name: 'a' } ]
+				}),
+				animals = zoo.get( 'animals' );
+
+			var a = animals.pop(),
+				b = animals.pop();
+
+			ok( a && a.get( 'name' ) === 'a' );
+			ok( typeof b === 'undefined' );
+		});
+
 
 	module( "Events", { setup: reset } );
 
@@ -3843,7 +4181,7 @@ $(document).ready(function() {
 
 			ok( change === 1, 'change event should fire' );
 			ok( changeAnimals === 1, 'change:animals event should fire' );
-			ok( animalChange === 0, 'no animals:change event should fire' );
+			ok( animalChange === 1, 'no animals:change event should fire' );
 
 			// Change an animal
 			change = changeAnimals = animalChange = 0;
@@ -3867,7 +4205,7 @@ $(document).ready(function() {
 
 			ok( change === 1, 'change event should fire' );
 			ok( changeAnimals === 1, 'change:animals event should fire' );
-			ok( animalChange === 0, 'no animals:change event should fire' );
+			ok( animalChange === 1, 'animals:change event should fire' );
 
 			// Remove an `animal`
 			change = changeAnimals = animalChange = 0;
@@ -3890,7 +4228,7 @@ $(document).ready(function() {
 			animals.add( 'a2' );
 
 			ok( change === 0, 'change event not should fire' );
-//			ok( changeAnimals === 1, 'change:animals event should fire (should it??)' );
+			ok( changeAnimals === 0, 'no change:animals event should fire' );
 			ok( animalChange === 0, 'no animals:change event should fire' );
 
 			// Update an animal directly
@@ -3906,7 +4244,7 @@ $(document).ready(function() {
 			animals.remove( 'a2' );
 
 			ok( change === 0, 'no change event should fire' );
-//			ok( changeAnimals === 1, 'change:animals event should fire (should it??)' );
+			ok( changeAnimals === 0, 'no change:animals event should fire' );
 			ok( animalChange === 0, 'no animals:change event should fire' );
 		});
 
@@ -3975,6 +4313,46 @@ $(document).ready(function() {
 			ok( changeEventsTriggered == 1, "Exactly one change event was triggered (triggered " + changeEventsTriggered + " events)" );
 		});
 
+		test( "triggers appropriate change events even when callbacks have triggered set with an unchanging value", function() {
+			var house = new House({
+				id: 'house-100',
+				location: 'in the middle of the street'
+			});
+
+			var changeEventsTriggered = 0;
+
+			house
+				.on('change:location', function() {
+					house.set({location: 'somewhere else'});
+				})
+				.on( 'change', function () {
+					changeEventsTriggered++;
+				});
+
+			house.set( { location: 'somewhere else' } );
+
+			ok( changeEventsTriggered === 1, 'one change triggered for `house`' );
+
+			var person = new Person({
+				id: 1
+			});
+
+			changeEventsTriggered = 0;
+
+			person
+				.on('change:livesIn', function() {
+					//console.log( arguments );
+					house.set({livesIn: house});
+				})
+				.on( 'change', function () {
+					//console.log( arguments );
+					changeEventsTriggered++;
+				});
+
+			person.set({livesIn: house});
+
+			ok( changeEventsTriggered === 2, 'one change each triggered for `house` and `person`' );
+		  });
 
 	module( "Performance", { setup: reset } );
 
